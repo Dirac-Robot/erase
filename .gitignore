@@ -8,3 +8,16 @@ wheels/
 
 # Virtual environments
 .venv
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Environment
+.env
+.env.local
