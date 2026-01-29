@@ -1,12 +1,13 @@
 [project]
-name = "sudal"
+name = "erase"
 version = "0.1.0"
-description = "Add your description here"
+description = "Explicit Retention And Selective Erasure - Dual-scored memory for LLM summarization"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "ato>=2.2.0",
     "langchain>=1.2.2",
+    "langchain-openai>=1.1.7",
     "langgraph>=1.0.5",
     "pydantic>=2.12.5",
 ]
