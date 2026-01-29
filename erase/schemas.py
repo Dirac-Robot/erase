@@ -15,7 +15,7 @@ class MemoryChunk(BaseModel):
         ge=0.0, le=1.0,
         description='How safe it is to forget this information (0=must keep, 1=safe to forget)'
     )
-    metadata: dict = Field(default_factory=dict)
+    category: Optional[str] = Field(default=None, description='Optional category label')
 
 
 class ScoredChunks(BaseModel):
