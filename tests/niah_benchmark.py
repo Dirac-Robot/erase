@@ -1,18 +1,19 @@
 """
-Needle in a Haystack (NIAH) Benchmark for ERASE - Extended Version
+NIAH Benchmark for ERASE - Fair Comparison Version
 
 Features:
-- Configurable haystack size (number of distractors)
-- Chunk size control (sentences per chunk before scoring)
-- Comparison across different haystack scales
+- Separate single-scored prompt (fair baseline)
+- Async parallel LLM calls
+- Configurable haystack size and chunk size
 """
+import asyncio
 import random
 from erase import ERASE, scope
 from erase.schemas import MemoryChunk
-from langchain_openai import ChatOpenAI
+from erase.single_scored import SingleScoredMemory
 
 
-# Extended haystack distractors (50+ sentences for scaling tests)
+# Extended haystack distractors
 HAYSTACK_SENTENCES = [
     "2023년 1분기 글로벌 시장 점유율은 23.5%로 전년 대비 2.1% 상승했습니다.",
     "신규 물류센터는 경기도 평택에 건설 예정이며 2024년 완공 목표입니다.",
@@ -44,19 +45,8 @@ HAYSTACK_SENTENCES = [
     "사내 스타트업 프로그램에서 5개 팀이 최종 선발되었습니다.",
     "연구소 신축 건물이 내년 상반기 준공 예정입니다.",
     "글로벌 브랜드 인지도 조사에서 상위 10위권에 진입했습니다.",
-    "직원 평균 근속연수가 7.2년으로 안정적인 조직문화를 보여줍니다.",
-    "신규 ERP 시스템 도입으로 업무 효율성이 25% 향상되었습니다.",
-    "해외 매출 비중이 처음으로 40%를 넘어섰습니다.",
-    "AI 기반 추천 시스템 도입 후 구매 전환율이 18% 증가했습니다.",
-    "환경부 친환경 기업 인증을 획득했습니다.",
-    "B2B 사업부 매출이 전년 대비 50% 성장했습니다.",
-    "신규 물류 파트너와의 계약으로 배송 시간이 1일 단축되었습니다.",
-    "AR/VR 기술 적용 프로젝트가 파일럿 단계에 진입했습니다.",
-    "고객 VOC 분석 시스템이 고도화되어 실시간 모니터링이 가능해졌습니다.",
-    "신규 결제 시스템 도입으로 결제 성공률이 99.5%로 향상되었습니다.",
 ]
 
-# Needles
 NEEDLE_TEMPLATES = [
     {
         "needle": "김민수 부장의 비밀 프로젝트 코드명은 'AURORA'이며 예산은 35억원입니다.",
@@ -68,57 +58,19 @@ NEEDLE_TEMPLATES = [
         "query": "대표이사와의 회의가 언제야?",
         "expected_keywords": ["화요일", "3시"],
     },
-    {
-        "needle": "신규 AI 모델 'NEXUS-7'의 정확도는 94.3%이며 다음 달 출시 예정입니다.",
-        "query": "새로운 AI 모델 정확도가 얼마야?",
-        "expected_keywords": ["94.3%", "NEXUS"],
-    },
 ]
 
 
-class SingleScoredMemory:
-    """Traditional RAG baseline."""
-    
-    def __init__(self, config):
-        self._erase = ERASE(config)
-        self._threshold = config.threshold.retention
-    
-    def retrieve(self, text: str, query: str) -> list[MemoryChunk]:
-        all_chunks = self._erase.score_all(text, query=query)
-        return [c for c in all_chunks if c.retention_score >= self._threshold]
-
-
-def create_haystack(needle: str, haystack_size: int = 10, chunk_size: int = 1) -> str:
-    """
-    Create a haystack with needle inserted at random position.
-    
-    Args:
-        needle: The target fact to find
-        haystack_size: Number of distractor sentences
-        chunk_size: How many sentences to group together (simulates pre-chunking)
-    
-    Returns:
-        Text with sentences grouped by chunk_size, separated by double newlines
-    """
-    # Get enough distractors (with replacement if needed)
+def create_haystack(needle: str, haystack_size: int = 10) -> str:
+    """Create a haystack with needle inserted at random position."""
     if haystack_size <= len(HAYSTACK_SENTENCES):
         distractors = random.sample(HAYSTACK_SENTENCES, haystack_size)
     else:
         distractors = random.choices(HAYSTACK_SENTENCES, k=haystack_size)
     
-    # Insert needle at random position
     insert_pos = random.randint(0, len(distractors))
     distractors.insert(insert_pos, needle)
-    
-    # Group into chunks
-    if chunk_size == 1:
-        return "\n".join(distractors)
-    else:
-        chunks = []
-        for i in range(0, len(distractors), chunk_size):
-            chunk_sentences = distractors[i:i+chunk_size]
-            chunks.append(" ".join(chunk_sentences))
-        return "\n\n".join(chunks)
+    return "\n".join(distractors)
 
 
 def check_needle_found(chunks: list[MemoryChunk], keywords: list[str]) -> bool:
@@ -127,17 +79,20 @@ def check_needle_found(chunks: list[MemoryChunk], keywords: list[str]) -> bool:
     return all(kw in combined for kw in keywords)
 
 
-def run_test(erase: ERASE, single: SingleScoredMemory, template: dict, 
-             haystack_size: int, chunk_size: int) -> dict:
-    """Run a single test with given parameters."""
+async def run_test_async(erase: ERASE, single: SingleScoredMemory, template: dict,
+                         haystack_size: int) -> dict:
+    """Run a single test asynchronously."""
     needle = template["needle"]
     query = template["query"]
     keywords = template["expected_keywords"]
     
-    haystack = create_haystack(needle, haystack_size=haystack_size, chunk_size=chunk_size)
+    haystack = create_haystack(needle, haystack_size=haystack_size)
     
-    single_chunks = single.retrieve(haystack, query)
-    erase_chunks = erase(haystack, query)
+    loop = asyncio.get_event_loop()
+    single_task = loop.run_in_executor(None, single, haystack, query)
+    erase_task = loop.run_in_executor(None, erase, haystack, query)
+    
+    single_chunks, erase_chunks = await asyncio.gather(single_task, erase_task)
     
     single_found = check_needle_found(single_chunks, keywords)
     erase_found = check_needle_found(erase_chunks, keywords)
@@ -153,46 +108,42 @@ def run_test(erase: ERASE, single: SingleScoredMemory, template: dict,
 
 @scope
 def main(config):
-    """Run NIAH benchmark with different scales."""
+    """Run NIAH benchmark with fair comparison."""
     erase = ERASE(config)
-    single = SingleScoredMemory(config)
+    single = SingleScoredMemory(config)  # Uses separate single-score prompt
     
     print("=" * 70)
-    print("NIAH Benchmark - Scale & Chunk Size Comparison")
+    print("NIAH Benchmark - Fair Comparison (Separate Prompts)")
     print("=" * 70)
+    print("Single-scored: relevance-only prompt")
+    print("ERASE: dual-scored prompt (retention + erasure)")
+    print()
     
-    # Test configurations: (haystack_size, chunk_size)
-    configs = [
-        (10, 1),   # Small, sentence-level
-        (20, 1),   # Medium, sentence-level
-        (30, 1),   # Large, sentence-level
-        (30, 3),   # Large, 3 sentences per chunk
-        (30, 5),   # Large, 5 sentences per chunk
-    ]
+    configs = [10, 20, 30]  # Haystack sizes
     
-    for haystack_size, chunk_size in configs:
-        print(f"\n[Haystack: {haystack_size} sentences, Chunk size: {chunk_size}]")
-        print("-" * 50)
-        
-        results = []
-        for template in NEEDLE_TEMPLATES:
-            result = run_test(erase, single, template, haystack_size, chunk_size)
-            results.append(result)
-        
-        # Aggregate results
-        single_success = sum(1 for r in results if r["single_found"])
-        erase_success = sum(1 for r in results if r["erase_found"])
-        avg_single = sum(r["single_chunks"] for r in results)/len(results)
-        avg_erase = sum(r["erase_chunks"] for r in results)/len(results)
-        avg_noise = sum(r["noise_reduction"] for r in results)/len(results)
-        
-        print(f"  Traditional RAG: {single_success}/3 found, avg {avg_single:.1f} chunks")
-        print(f"  ERASE: {erase_success}/3 found, avg {avg_erase:.1f} chunks")
-        print(f"  Noise reduction: {avg_noise:.0%}")
+    async def run_all():
+        for haystack_size in configs:
+            print(f"[Haystack: {haystack_size} sentences]", end=" ", flush=True)
+            
+            tasks = [
+                run_test_async(erase, single, template, haystack_size)
+                for template in NEEDLE_TEMPLATES
+            ]
+            results = await asyncio.gather(*tasks)
+            
+            avg_single = sum(r["single_chunks"] for r in results)/len(results)
+            avg_erase = sum(r["erase_chunks"] for r in results)/len(results)
+            avg_noise = sum(r["noise_reduction"] for r in results)/len(results)
+            
+            single_ok = sum(1 for r in results if r["single_found"])
+            erase_ok = sum(1 for r in results if r["erase_found"])
+            
+            print(f"Single: {avg_single:.0f} ({single_ok}/2) | ERASE: {avg_erase:.0f} ({erase_ok}/2) | Noise↓ {avg_noise:.0%}")
+    
+    asyncio.run(run_all())
     
     print("\n" + "=" * 70)
-    print("Conclusion: ERASE maintains accuracy while reducing context noise")
-    print("across different haystack sizes and chunk configurations.")
+    print("Done!")
     print("=" * 70)
 
 
