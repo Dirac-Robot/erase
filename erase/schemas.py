@@ -1,4 +1,5 @@
-from typing import Optional
+from datetime import datetime
+from typing import Optional, Literal
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
@@ -30,7 +31,19 @@ class ScoredChunks(BaseModel):
 class ERASEState(TypedDict):
     """Main state for ERASE workflow."""
     input_text: str
-    query: Optional[str]  # Query to condition erasure scoring
+    query: Optional[str]
     chunks: list[MemoryChunk]
     committed_memory: list[MemoryChunk]
     iteration: int
+
+
+class Message(BaseModel):
+    """A conversation message with optional ERASE scores."""
+    role: Literal['user', 'assistant', 'system'] = Field(description='Message role')
+    content: str = Field(description='Message content')
+    timestamp: datetime = Field(default_factory=datetime.now)
+    retention_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    erasure_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    
+    def to_str(self) -> str:
+        return f"[{self.role}] {self.content}"
