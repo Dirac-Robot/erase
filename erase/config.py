@@ -9,7 +9,7 @@ def default(config: ADict):
     config.model = 'gpt-4o-mini'
     config.threshold = ADict(
         retention=0.5,
-        erasure=0.7
+        erasure=0.5
     )
 
 

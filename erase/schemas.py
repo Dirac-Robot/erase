@@ -5,16 +5,14 @@ from typing_extensions import TypedDict
 
 
 class MemoryChunk(BaseModel):
-    """A scored memory unit with retention and erasure scores."""
+    """A scored memory unit with binary retention and erasure flags."""
     id: str = Field(description='Unique identifier for this memory chunk')
     content: str = Field(description='The actual content of this memory')
-    retention_score: float = Field(
-        ge=0.0, le=1.0,
-        description='How important this information is to remember (0=unimportant, 1=critical)'
+    is_relevant: bool = Field(
+        description='True if this chunk is relevant to the query. False if completely unrelated.'
     )
-    erasure_score: float = Field(
-        ge=0.0, le=1.0,
-        description='How much this should be excluded (0=keep, 1=exclude). High score means either trivial OR must-be-excluded from current context.'
+    should_exclude: bool = Field(
+        description='True if this should be EXCLUDED (related but does not answer query). False to KEEP.'
     )
     category: Optional[str] = Field(default=None, description='Optional category label')
 
@@ -38,12 +36,12 @@ class ERASEState(TypedDict):
 
 
 class Message(BaseModel):
-    """A conversation message with optional ERASE scores."""
+    """A conversation message with optional ERASE flags."""
     role: Literal['user', 'assistant', 'system'] = Field(description='Message role')
     content: str = Field(description='Message content')
     timestamp: datetime = Field(default_factory=datetime.now)
-    retention_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
-    erasure_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    is_relevant: Optional[bool] = Field(default=None)
+    should_exclude: Optional[bool] = Field(default=None)
     
     def to_str(self) -> str:
         return f"[{self.role}] {self.content}"

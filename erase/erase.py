@@ -59,53 +59,34 @@ class ERASE:
         query = state.get('query')
         
         if query:
-            prompt = f"""You are a memory scoring system. Analyze the text and score each chunk.
+            prompt = f"""You are a document filter. For each text chunk, decide:
 
-## SCORING RULES
+### is_relevant
+- true: Related to the query topic
+- false: Completely unrelated
 
-### retention_score (0.0-1.0): General Importance
-How important is this information IN ISOLATION, regardless of any query?
-- 1.0: Critical facts (names, numbers, dates, decisions, key data)
-- 0.7: Important but not critical
-- 0.4: Moderately useful
-- 0.0: Trivial (greetings, filler, small talk)
+### should_exclude
+- false (KEEP): Chunk doesn't have to be excluded.
+- true (EXCLUDE): Chunk has to be excluded.
 
-### erasure_score (0.0-1.0): Query Relevance (CRITICAL!)
-Should this be EXCLUDED when answering the specific query below?
-
-**CURRENT QUERY: "{query}"**
-
-Think: "Does this chunk DIRECTLY help answer the query?"
-- 0.0: Directly relevant to the query (KEEP)
-- 0.3: Somewhat related (probably keep)
-- 0.7: Different topic but important (EXCLUDE despite importance)
-- 1.0: Completely off-topic or noise (EXCLUDE)
-
-## KEY INSIGHT
-A chunk can have HIGH retention (important info) AND HIGH erasure (off-topic for THIS query).
-Example: "Project A costs $1M" has high retention, but if query asks about Project B, erasure should be HIGH.
+**QUERY: "{query}"**
 
 ## EXAMPLES
-Query: "What is Project B's budget?"
-- "Project B budget is $500K" → R=1.0, E=0.0 (directly answers)
-- "Project A budget is $1M" → R=0.9, E=0.9 (important but wrong project!)
-- "Let's grab coffee" → R=0.1, E=1.0 (trivial and off-topic)
+Query: "Who developed Linux?"
+- "Linux was developed by Linus Torvalds in 1991." → is_relevant=true, should_exclude=false (KEEP: has the answer "Linus Torvalds")
+- "Linux is open-source and free to use." → is_relevant=true, should_exclude=true (EXCLUDE: about Linux, but no answer to "Who")
+- "Python is a programming language." → is_relevant=false, should_exclude=true (EXCLUDE: unrelated)
 
 ## TEXT TO ANALYZE:
 {state['input_text']}
 
-Break into meaningful chunks and score each. Use unique IDs like chunk1, chunk2, etc."""
+Break into meaningful chunks and classify each."""
         else:
             prompt = f"""Analyze the following text and break it into meaningful memory chunks.
 For each chunk, assign:
 
-- retention_score (0.0-1.0): How important is this information?
-  - 1.0 = critical fact (names, dates, decisions, key numbers)
-  - 0.0 = trivial detail
-
-- erasure_score (0.0-1.0): Should this be excluded?
-  - Use 0.0 for most chunks (no specific query to filter by)
-  - Use higher scores only for sensitive or clearly temporary info
+- is_relevant: true for most chunks (no specific query to filter by)
+- should_exclude: true only for sensitive or clearly temporary info
 
 Assign unique IDs to each chunk.
 
@@ -121,17 +102,11 @@ Text to analyze:
         return {'chunks': result.chunks}
 
     def apply_threshold(self, state: ERASEState) -> dict:
-        """Filter chunks based on retention and erasure thresholds."""
-        retention_threshold = self._config.threshold.retention
-        erasure_threshold = self._config.threshold.erasure
-
+        """Filter chunks based on binary is_relevant and should_exclude flags."""
         committed = []
         for chunk in state['chunks']:
-            keep = (
-                chunk.retention_score >= retention_threshold and
-                chunk.erasure_score < erasure_threshold
-            )
-            if keep:
+            # Keep if relevant AND not excluded
+            if chunk.is_relevant and not chunk.should_exclude:
                 committed.append(chunk)
 
         return {
