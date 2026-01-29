@@ -1,5 +1,5 @@
 import uuid
-from typing import Callable
+from typing import Optional
 
 from ato.adict import ADict
 from langchain_core.language_models import BaseChatModel
@@ -15,8 +15,14 @@ class ERASE:
     Explicit Retention And Selective Erasure
 
     A dual-scored memory system that explicitly models:
-    - Retention Score: How important is this information to remember?
-    - Erasure Score: How safe is it to forget this information?
+    - Retention Score: How important is this information?
+    - Erasure Score: Should this be excluded? (trivial OR must-exclude)
+    
+    Both scores are independent (don't sum to 1).
+    High erasure overrides high retention.
+    
+    Key insight: Scores are QUERY-CONDITIONAL.
+    The same chunk may have different erasure scores for different queries.
     """
 
     def __init__(self, config: ADict):
@@ -50,15 +56,32 @@ class ERASE:
         """Chunk input text and score each chunk for retention and erasure."""
         structured_llm = self._llm.with_structured_output(ScoredChunks)
 
-        prompt = f"""Analyze the following text and break it into meaningful memory chunks.
-For each chunk, assign:
-- retention_score (0.0-1.0): How important is this to remember? (1.0 = critical fact, 0.0 = trivial detail)
-- erasure_score (0.0-1.0): How safe is it to forget? (1.0 = safe to forget, 0.0 = must never forget)
+        query = state.get('query')
+        query_context = ""
+        if query:
+            query_context = f"""
+CURRENT QUERY/CONTEXT: "{query}"
 
-Guidelines:
-- Key facts, names, dates, decisions → high retention, low erasure
-- Background context, filler words → low retention, high erasure
-- Assign unique IDs to each chunk
+Score erasure_score based on whether each chunk should be EXCLUDED when answering this specific query.
+Even important information should have high erasure if it's irrelevant or potentially confusing for THIS query.
+"""
+
+        prompt = f"""Analyze the following text and break it into meaningful memory chunks.
+For each chunk, assign two INDEPENDENT scores (they don't need to sum to 1):
+
+- retention_score (0.0-1.0): How important is this information IN GENERAL?
+  - 1.0 = critical fact (names, dates, decisions, key numbers)
+  - 0.0 = trivial detail
+
+- erasure_score (0.0-1.0): Should this be EXCLUDED from the current context?
+  - Use this for info that IS important but should NOT be retrieved NOW
+  - Examples: off-topic facts, outdated info, sensitive data, context-inappropriate
+  - 1.0 = must exclude from current context
+  - 0.0 = safe to include
+{query_context}
+Key insight: High retention + High erasure = "Important, but not now/here"
+
+Assign unique IDs to each chunk.
 
 Text to analyze:
 {state['input_text']}"""
@@ -90,10 +113,16 @@ Text to analyze:
             'iteration': state.get('iteration', 0)+1
         }
 
-    def invoke(self, text: str) -> list[MemoryChunk]:
-        """Process text and return committed memories."""
+    def invoke(self, text: str, query: Optional[str] = None) -> list[MemoryChunk]:
+        """Process text and return committed memories.
+        
+        Args:
+            text: The input text to analyze and chunk
+            query: Optional query/context to condition the erasure scoring
+        """
         initial_state: ERASEState = {
             'input_text': text,
+            'query': query,
             'chunks': [],
             'committed_memory': [],
             'iteration': 0
@@ -101,5 +130,5 @@ Text to analyze:
         result = self._graph.invoke(initial_state)
         return result['committed_memory']
 
-    def __call__(self, text: str) -> list[MemoryChunk]:
-        return self.invoke(text)
+    def __call__(self, text: str, query: Optional[str] = None) -> list[MemoryChunk]:
+        return self.invoke(text, query)

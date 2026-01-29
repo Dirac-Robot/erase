@@ -13,7 +13,7 @@ class MemoryChunk(BaseModel):
     )
     erasure_score: float = Field(
         ge=0.0, le=1.0,
-        description='How safe it is to forget this information (0=must keep, 1=safe to forget)'
+        description='How much this should be excluded (0=keep, 1=exclude). High score means either trivial OR must-be-excluded from current context.'
     )
     category: Optional[str] = Field(default=None, description='Optional category label')
 
@@ -30,6 +30,7 @@ class ScoredChunks(BaseModel):
 class ERASEState(TypedDict):
     """Main state for ERASE workflow."""
     input_text: str
+    query: Optional[str]  # Query to condition erasure scoring
     chunks: list[MemoryChunk]
     committed_memory: list[MemoryChunk]
     iteration: int
