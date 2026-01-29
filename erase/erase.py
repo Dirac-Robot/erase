@@ -57,29 +57,55 @@ class ERASE:
         structured_llm = self._llm.with_structured_output(ScoredChunks)
 
         query = state.get('query')
-        query_context = ""
+        
         if query:
-            query_context = f"""
-CURRENT QUERY/CONTEXT: "{query}"
+            prompt = f"""You are a memory scoring system. Analyze the text and score each chunk.
 
-Score erasure_score based on whether each chunk should be EXCLUDED when answering this specific query.
-Even important information should have high erasure if it's irrelevant or potentially confusing for THIS query.
-"""
+## SCORING RULES
 
-        prompt = f"""Analyze the following text and break it into meaningful memory chunks.
-For each chunk, assign two INDEPENDENT scores (they don't need to sum to 1):
+### retention_score (0.0-1.0): General Importance
+How important is this information IN ISOLATION, regardless of any query?
+- 1.0: Critical facts (names, numbers, dates, decisions, key data)
+- 0.7: Important but not critical
+- 0.4: Moderately useful
+- 0.0: Trivial (greetings, filler, small talk)
 
-- retention_score (0.0-1.0): How important is this information IN GENERAL?
+### erasure_score (0.0-1.0): Query Relevance (CRITICAL!)
+Should this be EXCLUDED when answering the specific query below?
+
+**CURRENT QUERY: "{query}"**
+
+Think: "Does this chunk DIRECTLY help answer the query?"
+- 0.0: Directly relevant to the query (KEEP)
+- 0.3: Somewhat related (probably keep)
+- 0.7: Different topic but important (EXCLUDE despite importance)
+- 1.0: Completely off-topic or noise (EXCLUDE)
+
+## KEY INSIGHT
+A chunk can have HIGH retention (important info) AND HIGH erasure (off-topic for THIS query).
+Example: "Project A costs $1M" has high retention, but if query asks about Project B, erasure should be HIGH.
+
+## EXAMPLES
+Query: "What is Project B's budget?"
+- "Project B budget is $500K" → R=1.0, E=0.0 (directly answers)
+- "Project A budget is $1M" → R=0.9, E=0.9 (important but wrong project!)
+- "Let's grab coffee" → R=0.1, E=1.0 (trivial and off-topic)
+
+## TEXT TO ANALYZE:
+{state['input_text']}
+
+Break into meaningful chunks and score each. Use unique IDs like chunk1, chunk2, etc."""
+        else:
+            prompt = f"""Analyze the following text and break it into meaningful memory chunks.
+For each chunk, assign:
+
+- retention_score (0.0-1.0): How important is this information?
   - 1.0 = critical fact (names, dates, decisions, key numbers)
   - 0.0 = trivial detail
 
-- erasure_score (0.0-1.0): Should this be EXCLUDED from the current context?
-  - Use this for info that IS important but should NOT be retrieved NOW
-  - Examples: off-topic facts, outdated info, sensitive data, context-inappropriate
-  - 1.0 = must exclude from current context
-  - 0.0 = safe to include
-{query_context}
-Key insight: High retention + High erasure = "Important, but not now/here"
+- erasure_score (0.0-1.0): Should this be excluded?
+  - Use 0.0 for most chunks (no specific query to filter by)
+  - Use higher scores only for sensitive or clearly temporary info
 
 Assign unique IDs to each chunk.
 
